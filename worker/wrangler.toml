@@ -1,0 +1,48 @@
+# Cloudflare Worker settings. Plain settings go here; keys and passwords are "secrets"
+# (set with `npx wrangler secret put NAME`, or in the Cloudflare dashboard). See the README.
+name = "snake-eyes"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+# Runs on the free plan. Two schedules: close idle rooms every minute, re-check payments every 2 minutes.
+[triggers]
+crons = ["* * * * *", "*/2 * * * *"]
+
+[vars]
+# ---- Fapshi ----------------------------------------------------------------------------
+# "sandbox" = test money, "live" = real money (use your live keys).
+FAPSHI_ENV = "sandbox"
+# "direct" = the player gets an approval request on their phone.
+# "link"   = the player is sent to a Fapshi payment page. Use this if Fapshi has not
+#            activated Direct Pay on your live account yet.
+FAPSHI_DEPOSIT_MODE = "direct"
+# Withdrawals up to this many XAF are paid automatically through Fapshi. 0 = every
+# withdrawal waits for you on /admin.html.
+AUTO_PAYOUT_MAX = "0"
+
+# ---- Your site -------------------------------------------------------------------------
+# Your website address with no trailing slash, e.g. https://my-project.web.app
+APP_BASE_URL = ""
+
+# ---- Game and money rules --------------------------------------------------------------
+ROOM_ENTRY_FEE = "100"
+STAKE_OPTIONS = "10,20,50,100"
+# Percent of the winner's PROFIT kept by you. 0 means your platform earns nothing from games.
+RAKE_PERCENT = "0"
+IDLE_TURN_SECONDS = "180"
+WAITING_ROOM_SECONDS = "900"
+MIN_DEPOSIT = "100"
+MAX_DEPOSIT = "500000"
+MIN_WITHDRAW = "500"
+MAX_WITHDRAW = "200000"
+WITHDRAW_FEE_PERCENT = "0"
+REFERRAL_BONUS = "100"
+REFERRAL_MIN_DEPOSIT = "500"
+
+# ---- Secrets (do NOT write them here) ---------------------------------------------------
+# FIREBASE_SERVICE_ACCOUNT   the whole JSON key file from Firebase
+# PIN_PEPPER                 a long random text, makes stolen PIN hashes useless
+# ADMIN_KEY                  a long random password for /admin.html
+# FAPSHI_COLLECT_USER / FAPSHI_COLLECT_KEY   Fapshi collection service
+# FAPSHI_PAYOUT_USER  / FAPSHI_PAYOUT_KEY    Fapshi payout service (optional)
+# FAPSHI_WEBHOOK_SECRET      the secret you set for the webhook on the Fapshi dashboard
