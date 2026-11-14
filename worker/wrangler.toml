@@ -22,7 +22,7 @@ AUTO_PAYOUT_MAX = "0"
 
 # ---- Your site -------------------------------------------------------------------------
 # Your website address with no trailing slash, e.g. https://my-project.web.app
-APP_BASE_URL = ""
+APP_BASE_URL = "https://my-project.web.app"
 
 # ---- Game and money rules --------------------------------------------------------------
 # Room money: the host picks one of these when opening a room, and every player puts in the same
