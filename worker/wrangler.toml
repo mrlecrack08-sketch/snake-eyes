@@ -37,7 +37,7 @@ STAKE_OPTIONS = "100,250,500,1000,2000"
 ROOM_FEE = "100"
 # YOUR OWN mobile money number (MTN or Orange, like 670000000). House money can ONLY be withdrawn
 # to this number, whatever is typed on the admin page.
-OWNER_PHONE = ""
+OWNER_PHONE = "683812020"
 # Percent of the winner's PROFIT kept by you. 0 means your platform earns nothing from games.
 RAKE_PERCENT = "0"
 IDLE_TURN_SECONDS = "180"
