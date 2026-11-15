@@ -58,4 +58,4 @@ PIN_PEPPER =  "660F18A4ZZRETZERZRaaaa1122321342343232432354234324234324434323434
 # FAPSHI_PAYOUT_USER  / FAPSHI_PAYOUT_KEY    Fapshi payout service (optional)
 # FAPSHI_WEBHOOK_SECRET      the secret you set for the webhook on the Fapshi dashboard
 [observability]
-enable = true
+enabled = true
