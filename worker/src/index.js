@@ -162,7 +162,10 @@ export async function handleFetch(request, env) {
 
 export async function handleScheduled(event, env) {
   boot(env);
-  if (event.cron === CRON_RECONCILE) console.log('reconcilePayments', JSON.stringify(await payments.reconcilePayments()));
+  if (event.cron === CRON_RECONCILE) {
+    console.log('reconcilePayments', JSON.stringify(await payments.reconcilePayments()));
+    console.log('autoSendPending', JSON.stringify(await payments.autoSendPending()));
+  }
   else console.log('sweepRooms', JSON.stringify(await rooms.sweepRooms()));
 }
 

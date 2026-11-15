@@ -260,6 +260,42 @@ async function checkPayment(uid, data) {
 }
 
 /** Scheduled safety net: re-check anything still open, in case a webhook never arrived. */
+const AUTO_SEND_TRIES = 5;
+
+/**
+ * Withdrawals are paid automatically. This background step (a) sends any withdrawal that is still
+ * 'pending' (for example Fapshi was briefly unreachable at the moment of the request) and (b) after
+ * AUTO_SEND_TRIES definite refusals from Fapshi, refunds the player. A 'pending' withdrawal has
+ * never been sent (see sendWithdrawal), so refunding it cannot pay anyone twice. Unclear outcomes
+ * ('review') are never touched here: only a person can check Fapshi for those.
+ */
+async function autoSendPending(now = Date.now(), max = 5) {
+  const out = { sent: 0, failed: 0, refunded: 0 };
+  if (!(cfg.AUTO_PAYOUT_MAX > 0) || !fapshi.payoutConfigured()) return out;
+  const snap = await pay().where('status', '==', 'pending').where('type', '==', 'withdrawal').limit(max * 4).get();
+  let tried = 0;
+  for (const d of snap.docs) {
+    const p = d.data();
+    if (tried >= max) break;
+    if (p.net > cfg.AUTO_PAYOUT_MAX) continue; // above the automatic limit: waits for the admin
+    if (now - (p.updatedAt || 0) < 45 * 1000) continue; // give the request that just made it a moment
+    tried++;
+    const attempts = (p.attempts || 0) + 1;
+    try {
+      await pay().doc(d.id).update({ attempts });
+      await sendWithdrawal(d.id, now);
+      out.sent++;
+    } catch (e) {
+      out.failed++;
+      if (attempts >= AUTO_SEND_TRIES) {
+        const r = await resolveWithdrawal(d.id, 'failed', { by: 'system', note: 'Fapshi could not send this payout after several tries. Your money was returned to your wallet.', now, allowed: ['pending'] });
+        if (r.changed) out.refunded++;
+      }
+    }
+  }
+  return out;
+}
+
 async function reconcilePayments(now = Date.now(), max = cfg.RECONCILE_BATCH) {
   const out = { checked: 0, errors: 0, flagged: 0 };
 
@@ -348,5 +384,5 @@ async function adminResolve(data) {
 
 export {
   startDeposit, finalizeDeposit, requestWithdrawal, sendWithdrawal, resolveWithdrawal, refreshPayment, checkPayment,
-  reconcilePayments, handleFapshiWebhook, adminList, adminResolve,
+  reconcilePayments, autoSendPending, handleFapshiWebhook, adminList, adminResolve,
 };

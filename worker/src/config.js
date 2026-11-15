@@ -23,7 +23,7 @@ const DEFAULTS = {
   MAX_WITHDRAW: 200000,
   WITHDRAW_FEE_PERCENT: 0,
   DEPOSIT_EXPIRE_MINUTES: 60,
-  AUTO_PAYOUT_MAX: 0, // withdrawals up to this amount are paid automatically (0 = all wait for admin)
+  AUTO_PAYOUT_MAX: 200000, // withdrawals up to this amount are paid automatically through Fapshi (0 = all wait for admin)
 
   // ---- Referral ----
   REFERRAL_BONUS: 100,
