@@ -49,7 +49,7 @@ MAX_WITHDRAW = "200000"
 WITHDRAW_FEE_PERCENT = "0"
 REFERRAL_BONUS = "100"
 REFERRAL_MIN_DEPOSIT = "500"
-PIN_PEPPER =  "660F18A4ZZRETZERZRaaaa11223213423432324323542343242343244343234343344543434FRFR"
+
 # ---- Secrets (do NOT write them here) ---------------------------------------------------
 # FIREBASE_SERVICE_ACCOUNT   the whole JSON key file from Firebase
 # PIN_PEPPER                 a long random text, makes stolen PIN hashes useless
