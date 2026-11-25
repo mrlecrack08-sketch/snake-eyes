@@ -11,11 +11,11 @@ crons = ["* * * * *", "*/2 * * * *"]
 [vars]
 # ---- Fapshi ----------------------------------------------------------------------------
 # "sandbox" = test money, "live" = real money (use your live keys).
-FAPSHI_ENV = "sandbox"
+FAPSHI_ENV = "live"
 # "direct" = the player gets an approval request on their phone.
 # "link"   = the player is sent to a Fapshi payment page. Use this if Fapshi has not
 #            activated Direct Pay on your live account yet.
-FAPSHI_DEPOSIT_MODE = "direct"
+FAPSHI_DEPOSIT_MODE = "link"
 # Withdrawals up to this many XAF are paid automatically through Fapshi, with no action from
 # you (a background job also retries a payout Fapshi refused, and refunds the player after
 # 5 refusals). 0 = every withdrawal waits for you on the admin page.
@@ -23,7 +23,7 @@ AUTO_PAYOUT_MAX = "200000"
 
 # ---- Your site -------------------------------------------------------------------------
 # Your website address with no trailing slash, e.g. https://my-project.web.app
-APP_BASE_URL = ""
+APP_BASE_URL = "https://le-terre.web.app"
 
 # ---- Game and money rules --------------------------------------------------------------
 # Room money: the host picks one of these when opening a room, and every player puts in the same
