@@ -81,7 +81,7 @@ test('rolling out of turn is rejected', () => {
 // ---- room lifecycle -------------------------------------------------------
 test('only the host picks the stake, and only an allowed one', () => {
   const r = mk();
-  assert.deepEqual(r.allowed, [10, 20, 50, 100]);
+  assert.deepEqual(r.allowed, [10, 20, 50], 'a stake is always below the room money, so one roll cannot end the room');
   assert.throws(() => E.startRound(r, 'B', 10, 3), /host/);
   assert.throws(() => E.startRound(r, 'A', 33, 3), /not allowed/);
   assert.throws(() => E.startRound(r, 'A', 10.5, 3), /not allowed/);
@@ -104,9 +104,22 @@ test('first roller alternates every round, host first in round 1', () => {
 
 test('round winner takes the stake and the stakes list shrinks near the end', () => {
   let r = mk();
-  r = E.startRound(r, 'A', 100, 3);
-  r = E.roll(r, 'A', [6, 6], OPT, 4);
-  r = E.roll(r, 'B', [2, 4], OPT, 5);
+  const aWinsRound = (stake) => {
+    r = E.startRound(r, 'A', stake, 3);
+    const [first, second] = r.cur.queue;
+    r = E.roll(r, first, first === 'A' ? [6, 6] : [2, 4], OPT, 4);
+    r = E.roll(r, second, second === 'A' ? [6, 6] : [2, 4], OPT, 5);
+  };
+  aWinsRound(50);
+  assert.equal(r.players.A.stack, 150);
+  assert.equal(r.players.B.stack, 50);
+  assert.equal(r.status, 'playing', 'the room does not end after one roll');
+  assert.deepEqual(r.allowed, [10, 20]);
+  aWinsRound(20);
+  aWinsRound(20);
+  assert.equal(r.players.B.stack, 10);
+  assert.deepEqual(r.allowed, [10], 'the last scraps go on the table together');
+  aWinsRound(10);
   assert.equal(r.players.A.stack, 200);
   assert.equal(r.players.B.stack, 0);
   assert.equal(r.status, 'finished');
@@ -118,7 +131,9 @@ test('all-in is offered when a stack is below the smallest option', () => {
   let r = mk();
   r.players.A.stack = 105;
   r.players.B.stack = 95;
-  assert.deepEqual(E.allowedStakes(r, OPT), [10, 20, 50, 95]);
+  assert.deepEqual(E.allowedStakes(r, OPT), [10, 20, 50]);
+  r.players.B.stack = 10;
+  assert.deepEqual(E.allowedStakes(r, OPT), [10], 'equal to the smallest stake: it is the last one');
   r.players.B.stack = 4;
   assert.deepEqual(E.allowedStakes(r, OPT), [4]);
 });
@@ -253,7 +268,7 @@ test('simulation: dice are fair enough that neither side has a real edge', () =>
   for (let g = 0; g < N; g++) {
     let r = mk();
     while (r.status === 'playing') {
-      if (r.phase === 'stake') r = E.startRound(r, 'A', 100, 1);
+      if (r.phase === 'stake') r = E.startRound(r, 'A', r.allowed[r.allowed.length - 1], 1);
       else r = E.roll(r, r.cur.queue[0], [E.randomDie(), E.randomDie()], OPT, 1);
     }
     if (r.result.winnerUid === 'A') aWins++;
@@ -274,4 +289,28 @@ test('Cameroon phone numbers normalise to +237 format', () => {
   assert.equal(operatorHint('+237670123456'), 'mtn');
   assert.equal(operatorHint('+237690123456'), 'orange');
   assert.equal(operatorHint('+237660123456'), null);
+});
+
+
+test('a room never ends on the first roll, with the real room money and stakes', () => {
+  const STAKES = [100, 250, 500, 1000, 2000];
+  for (const buyIn of [250, 500, 1000, 2000, 5000, 10000]) {
+    for (let g = 0; g < 300; g++) {
+      let r = E.newRoom({ code: 'X', mode: 'pvp', visibility: 'public', hostUid: 'A', hostName: 'Ann', entryFee: buyIn, stakeOptions: STAKES, now: 1 });
+      r = E.joinRoom(r, 'B', 'Bob', STAKES, 2);
+      let rounds = 0;
+      while (r.status === 'playing') {
+        if (r.phase === 'stake') {
+          // the host may pick any allowed stake, including the biggest
+          const pick = r.allowed[(g + rounds) % 2 ? r.allowed.length - 1 : 0];
+          assert.ok(pick < Math.min(r.players.A.stack, r.players.B.stack) || r.allowed.length === 1, 'never the whole poorer stack while a smaller stake exists');
+          r = E.startRound(r, 'A', pick, 3);
+          rounds++;
+        } else r = E.roll(r, r.cur.queue[0], [E.randomDie(), E.randomDie()], STAKES, 4);
+      }
+      assert.ok(rounds >= 2, `room money ${buyIn} ended after ${rounds} round(s)`);
+      assert.equal(r.players.A.stack + r.players.B.stack, 2 * buyIn);
+      assert.ok(r.players.A.stack === 0 || r.players.B.stack === 0, 'a room ends only when all the money is on one side');
+    }
+  }
 });

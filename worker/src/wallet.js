@@ -34,12 +34,16 @@ async function readUsers(tx, uids) {
   return out;
 }
 
-/** Add (or subtract) money. `delta` is a signed integer. Throws if the balance would go negative. */
-function credit(tx, entry, delta, type, refId, now, note) {
+/**
+ * Add (or subtract) money. `delta` is a signed integer. Throws if the balance would go negative,
+ * unless `allowNegative` is set (only used for the house, whose balance is the owner's equity: a
+ * promo bonus or a partner commission is a cost that the house carries).
+ */
+function credit(tx, entry, delta, type, refId, now, note, allowNegative = false) {
   if (!entry.exists) throw fail('failed-precondition', 'Account not found.');
   if (!Number.isInteger(delta)) throw new Error('Non-integer amount ' + delta);
   const next = (entry.data.balance || 0) + delta;
-  if (next < 0) throw fail('failed-precondition', 'Your balance is too low.');
+  if (next < 0 && !allowNegative) throw fail('failed-precondition', 'Your balance is too low.');
   entry.data.balance = next;
   entry.patch.balance = next;
   tx.set(entry.ref.collection('transactions').doc(), {

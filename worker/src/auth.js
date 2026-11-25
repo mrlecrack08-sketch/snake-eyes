@@ -116,6 +116,33 @@ export async function changePin(uid, data, now = Date.now()) {
   return { ok: true };
 }
 
+/**
+ * Admin tool: a demo account for a partner. It plays with fictitious money that the owner sets in
+ * /Crack. It can never deposit or withdraw, and it only meets other demo accounts (see rooms.js).
+ * Use a made-up number (like 6 00 00 00 01) so the partner's real number stays free for a real account.
+ */
+export async function adminCreateDemo(data, now = Date.now()) {
+  const phone = readPhone(data);
+  const name = checkProfileInput({ displayName: data.name, adult: true });
+  const pin = checkPinFormat(data.pin);
+  const balance = Number(data.balance === undefined ? 0 : data.balance);
+  if (!Number.isInteger(balance) || balance < 0 || balance > 10000000) throw fail('invalid-argument', 'The demo balance must be a whole number of XAF, 0 or more.');
+  const uid = uidFromPhone(phone);
+  const rec = await pinRecord(pin);
+  const extra = { demo: true, demoOf: typeof data.partnerId === 'string' ? data.partnerId : null, balance };
+  await db.runTransaction(async (tx) => {
+    const write = await planProfile(tx, { uid, phone, name, extra }, now);
+    write();
+    tx.set(secrets().doc(uid), { ...rec, createdAt: now, updatedAt: now });
+    if (balance > 0) {
+      tx.set(db.collection('users').doc(uid).collection('transactions').doc(), {
+        type: 'demo_adjust', amount: balance, balanceAfter: balance, ref: null, note: 'demo account created', createdAt: now,
+      });
+    }
+  });
+  return { uid, phone, name, balance };
+}
+
 /** Admin tool for a player who forgot their PIN. The admin must confirm who they are first. */
 export async function adminResetPin(data, now = Date.now()) {
   const phone = readPhone(data);

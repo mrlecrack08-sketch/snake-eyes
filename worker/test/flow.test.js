@@ -704,7 +704,7 @@ test('the whole ledger always matches balances', async () => {
   }
 });
 
-const prodEnv = () => { const { BUY_IN_OPTIONS, STAKE_OPTIONS, ROOM_FEE, MIN_DEPOSIT, MIN_WITHDRAW, ...rest } = env; return rest; };
+const prodEnv = () => { const { BUY_IN_OPTIONS, STAKE_OPTIONS, ROOM_FEE, MIN_DEPOSIT, MIN_WITHDRAW, AUTO_PAYOUT_MAX, ...rest } = env; return rest; };
 
 // ======================================================================= room money vs stake
 test('room money: defaults are 250/500/1000/2000/5000/10000, stakes 100/250/500/1000/2000, fee 100, min deposit 500, min withdraw 900', async () => {
@@ -744,13 +744,13 @@ test('room money: host picks it, everyone pays the same, the room runs until one
   await rooms.joinRoom(U.B, { code }, NOW);
   assert.equal(bal(U.B), 3000);
   let room = world.raw(`rooms/${roomId}`);
-  assert.deepEqual(room.allowed, [100, 250, 500, 1000, 2000], 'every stake fits in 2000 of room money');
+  assert.deepEqual(room.allowed, [100, 250, 500, 1000], 'stakes stay below the room money: 2000 is not offered in a 2000 room');
   await rejects(rooms.startRound(U.A, { roomId, stake: 5000 }, NOW), 'invalid-argument', /not allowed/);
 
   // Several 2000 rounds are needed to empty a 2000 room only if stakes are smaller: play 500s until someone is out.
   let rounds = 0;
   while (room.status === 'playing') {
-    if (room.phase === 'stake') { await rooms.startRound(U.A, { roomId, stake: 500 }, NOW); rounds += 1; }
+    if (room.phase === 'stake') { await rooms.startRound(U.A, { roomId, stake: room.allowed.includes(500) ? 500 : room.allowed[room.allowed.length - 1] }, NOW); rounds += 1; }
     else await rooms.rollDice(room.cur.queue[0], { roomId }, NOW);
     room = world.raw(`rooms/${roomId}`);
   }
@@ -759,7 +759,7 @@ test('room money: host picks it, everyone pays the same, the room runs until one
   assert.ok([bal(U.A), bal(U.B)].some((b) => b === 3000 + 4000), 'the winner leaves with the whole 4000 room');
 });
 
-test('room money: stakes are capped by the smaller stack, so a 1000 room never offers a 2000 stake', async () => {
+test('room money: stakes are always below the poorer stack, so a 1000 room never offers 1000 or 2000', async () => {
   world.reset();
   const rest = { ...prodEnv(), ROOM_FEE: '0' };
   configure(rest);
@@ -767,7 +767,8 @@ test('room money: stakes are capped by the smaller stack, so a 1000 room never o
   await mkUser(U.B, 2, 'Bob', 5000);
   const { roomId, code } = await rooms.createRoom(U.A, { mode: 'pvp', buyIn: 1000 }, NOW);
   await rooms.joinRoom(U.B, { code }, NOW);
-  assert.deepEqual(world.raw(`rooms/${roomId}`).allowed, [100, 250, 500, 1000]);
+  assert.deepEqual(world.raw(`rooms/${roomId}`).allowed, [100, 250, 500]);
+  await rejects(rooms.startRound(U.A, { roomId, stake: 1000 }, NOW), 'invalid-argument');
   await rejects(rooms.startRound(U.A, { roomId, stake: 2000 }, NOW), 'invalid-argument');
 });
 
@@ -966,4 +967,102 @@ test('house withdrawal: only to OWNER_PHONE, only up to the balance, send-once, 
   assert.equal(info.balance, 5000);
   assert.equal(info.ownerPhone, '+237677001122');
   assert.ok(info.recent.length >= 3);
+});
+
+// ======================================================================= withdrawals are automatic
+test('automatic withdrawals: paid at once with no admin action, even for the biggest allowed amount', async () => {
+  world.reset();
+  configure(prodEnv()); // default: AUTO_PAYOUT_MAX 200000
+  assert.equal(cfg.AUTO_PAYOUT_MAX, 200000);
+  await mkUser(U.A, 1, 'Ann', 50000);
+  const w = await payments.requestWithdrawal(U.A, { amount: 20000, pin: PIN, provider: 'mtn' }, NOW);
+  assert.equal(w.status, 'processing', 'sent straight away');
+  assert.equal(fapshiCalls('/payout').length, 1);
+  world.fapshi.settle(world.raw(`payments/${w.paymentId}`).providerRef, 'SUCCESSFUL');
+  await payments.reconcilePayments(NOW + 10 * 60 * 1000);
+  assert.equal(status(w.paymentId), 'success', 'confirmed by the background job');
+  assert.equal(bal(U.A), 30000);
+  assert.equal(fapshiCalls('/payout').length, 1, 'never sent twice');
+});
+
+test('automatic withdrawals: a refused payout is retried by the background job, then refunded, never sent twice', async () => {
+  world.reset();
+  configure(prodEnv());
+  await mkUser(U.A, 1, 'Ann', 10000);
+  const T = Date.now(); // payment documents are stamped with the real clock
+
+  // Fapshi says no (for example its balance is low) at the moment of the request
+  world.fapshi.rejectNext = { status: 400, body: { message: 'insufficient balance' } };
+  const w = await payments.requestWithdrawal(U.A, { amount: 2000, pin: PIN }, T);
+  assert.equal(w.status, 'pending');
+  assert.equal(bal(U.A), 8000, 'held while waiting');
+
+  // too soon: the job leaves it alone
+  assert.deepEqual(await payments.autoSendPending(T + 10 * 1000), { sent: 0, failed: 0, refunded: 0 });
+
+  // a minute later Fapshi accepts: it is sent without anybody pressing anything
+  const r = await payments.autoSendPending(T + 60 * 1000);
+  assert.equal(r.sent, 1);
+  assert.equal(status(w.paymentId), 'processing');
+  assert.equal(fapshiCalls('/payout').filter((c) => c.body.externalId === w.paymentId).length, 2, 'one refused call + one accepted call, and no more');
+  assert.deepEqual(await payments.autoSendPending(T + 5 * 60 * 1000), { sent: 0, failed: 0, refunded: 0 }, 'a payout that is on its way is not sent again');
+
+  // Fapshi keeps refusing: after 5 tries the player gets the money back
+  const w2 = await payments.requestWithdrawal(U.A, { amount: 1000, pin: PIN }, T);
+  assert.equal(w2.status, 'processing'); // this one worked, make the next ones fail instead
+    world.fapshi.rejectNext = { status: 400, body: { message: 'nope' } };
+  const w3 = await payments.requestWithdrawal(U.A, { amount: 1000, pin: PIN }, T + 1000);
+  assert.equal(w3.status, 'pending');
+  const before = bal(U.A);
+  let refunded = 0;
+  for (let i = 1; i <= 6 && !refunded; i++) {
+    world.fapshi.rejectNext = { status: 400, body: { message: 'nope' } };
+    refunded = (await payments.autoSendPending(T + (60 + i * 60) * 1000)).refunded;
+  }
+  assert.equal(refunded, 1);
+  assert.equal(status(w3.paymentId), 'failed');
+  assert.equal(bal(U.A), before + 1000, 'refunded exactly once');
+  assert.equal(world.raw(`payments/${w3.paymentId}`).resolvedBy, 'system');
+  assert.equal(ledgerSum(U.A), bal(U.A));
+  assert.deepEqual(await payments.autoSendPending(T + 30 * 60 * 1000), { sent: 0, failed: 0, refunded: 0 }, 'nothing left to do');
+});
+
+test('automatic withdrawals: unclear outcomes are never retried or refunded by the job', async () => {
+  world.reset();
+  configure(prodEnv());
+  await mkUser(U.A, 1, 'Ann', 5000);
+  world.fapshi.rejectNext = { status: 500, body: { message: 'oops' } };
+  const w = await payments.requestWithdrawal(U.A, { amount: 1000, pin: PIN }, NOW);
+  assert.equal(w.status, 'review');
+  assert.deepEqual(await payments.autoSendPending(NOW + 60 * 60 * 1000), { sent: 0, failed: 0, refunded: 0 });
+  assert.equal(status(w.paymentId), 'review', 'only a person can check Fapshi for an unclear result');
+  assert.equal(bal(U.A), 4000);
+});
+
+test('automatic withdrawals: without payout keys nothing is attempted, and the cron entry point runs the job', async () => {
+  world.reset();
+  configure({ ...prodEnv(), FAPSHI_PAYOUT_USER: '', FAPSHI_PAYOUT_KEY: '' });
+  await mkUser(U.A, 1, 'Ann', 5000);
+  const w = await payments.requestWithdrawal(U.A, { amount: 1000, pin: PIN }, NOW);
+  assert.equal(w.status, 'pending');
+  assert.deepEqual(await payments.autoSendPending(NOW + 60 * 60 * 1000), { sent: 0, failed: 0, refunded: 0 });
+  assert.equal(status(w.paymentId), 'pending', 'waits instead of being refunded when the keys are simply missing');
+});
+
+test('room types: a computer-table room never gets a code or waits for an opponent, and unknown types are refused', async () => {
+  world.reset();
+  configure(prodEnv());
+  await mkUser(U.A, 1, 'Ann', 5000);
+  await house.houseTopUp({ amount: 3000 }, NOW);
+  await rejects(rooms.createRoom(U.A, { mode: 'casino', buyIn: 500 }, NOW), 'invalid-argument', /Unknown room type/);
+  await rejects(rooms.createRoom(U.A, { mode: 'HOUSE', buyIn: 500 }, NOW), 'invalid-argument');
+  assert.equal(bal(U.A), 5000, 'a refused room costs nothing');
+  const r = await rooms.createRoom(U.A, { mode: 'house', buyIn: 500 }, NOW);
+  assert.equal(r.code, null, 'no invite code');
+  const room = world.raw(`rooms/${r.roomId}`);
+  assert.equal(room.status, 'playing', 'the game starts at once, nobody is awaited');
+  assert.equal(room.visibility, 'private');
+  assert.equal(room.order.length, 2);
+  const pvp = await rooms.createRoom(U.A, { mode: 'pvp', buyIn: 500 }, NOW).catch((e) => e);
+  assert.ok(pvp instanceof Error, 'a player can be in only one room at a time');
 });

@@ -17,6 +17,7 @@ import * as auth from './auth.js';
 import * as rooms from './rooms.js';
 import * as payments from './payments.js';
 import * as house from './house.js';
+import * as partners from './partners.js';
 
 export const CRON_SWEEP = '* * * * *';
 export const CRON_RECONCILE = '*/2 * * * *';
@@ -58,6 +59,9 @@ const ROUTES = {
   startDeposit: [(uid, d) => payments.startDeposit(uid, d), true],
   checkPayment: [(uid, d) => payments.checkPayment(uid, d), true],
   requestWithdrawal: [(uid, d) => payments.requestWithdrawal(uid, d), true],
+
+  promoCheck: [(uid, d) => partners.promoCheck(uid, d), true],
+  promoDeposit: [(uid, d) => payments.startPromoDeposit(uid, d), true],
 };
 
 const ADMIN_ROUTES = {
@@ -67,6 +71,14 @@ const ADMIN_ROUTES = {
   houseInfo: () => house.houseInfo(),
   houseWithdraw: (d) => house.houseWithdraw(d),
   houseTopUp: (d) => house.houseTopUp(d),
+  partnerList: () => partners.partnerList(),
+  partnerAdd: (d) => partners.partnerAdd(d),
+  partnerSetActive: (d) => partners.partnerSetActive(d),
+  partnerPay: (d) => partners.partnerPay(d),
+  referrals: (d) => partners.referralsList(d),
+  demoList: () => partners.demoList(),
+  demoCreate: (d) => partners.demoCreate(d),
+  demoSetBalance: (d) => partners.demoSetBalance(d),
 };
 
 // ---- CORS ----
@@ -129,7 +141,7 @@ export async function handleFetch(request, env) {
     const path = url.pathname.replace(/\/+$/, '') || '/';
 
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
-    if (path === '/' || path === '/api/health') return json(200, { ok: true, service: 'snake-eyes', fapshi: cfg.FAPSHI.ENV });
+    if (path === '/' || path === '/api/health') return json(200, { ok: true, service: 'snake-eyes', version: users.SERVER_VERSION, features: users.publicConfig().features, fapshi: cfg.FAPSHI.ENV });
 
     if (path === '/api/fapshi-webhook') {
       if (request.method !== 'POST') return json(405, { ok: false });

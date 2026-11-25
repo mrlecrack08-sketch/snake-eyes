@@ -12,6 +12,7 @@ import { cfg } from './config.js';
 import * as E from './engine.js';
 import { readUsers, credit, flush, bumpStat, HOUSE_UID } from './wallet.js';
 import { cleanCode, randomCode } from './users.js';
+import { promoOf, promoMove, recordPlay, settlePromoRoom } from './promo.js';
 
 const rooms = () => db.collection('rooms');
 const codes = () => db.collection('roomCodes');
@@ -43,14 +44,20 @@ function settle(tx, roomId, room, users, now) {
   const { payouts, rake } = E.computePayouts(room, cfg.RAKE_PERCENT);
   room.result.payouts = payouts;
   room.result.rake = rake;
+  const cancelled = room.result.reason === 'cancelled';
   for (const uid of room.playerUids) {
     const u = users[uid];
     if (!u || !u.exists) continue;
     if (room.mode === 'pvp' || room.mode === 'house') {
       const amount = payouts[uid] || 0;
-      const type = room.result.reason === 'cancelled' ? 'room_refund' : 'room_payout';
-      if (amount > 0) credit(tx, u, amount, type, roomId, now);
-      if (room.result.reason !== 'cancelled') {
+      if (room.fundedBy === 'promo' && uid === room.hostUid) {
+        // Bonus money goes back to the bonus section and counts toward the wager (see promo.js).
+        settlePromoRoom(tx, u, { payout: amount, bet: room.wagered || 0, cancelled }, roomId, now);
+      } else {
+        if (amount > 0) credit(tx, u, amount, cancelled ? 'room_refund' : 'room_payout', roomId, now);
+        if (!cancelled && !room.demo) recordPlay(u, room.wagered || 0); // deposited money counts as played
+      }
+      if (!cancelled) {
         const stats = u.data.stats || { played: 0, won: 0 };
         u.patch.stats = { played: stats.played + 1, won: stats.won + (room.result.winnerUid === uid ? 1 : 0) };
         u.data.stats = u.patch.stats;
@@ -62,9 +69,9 @@ function settle(tx, roomId, room, users, now) {
     }
   }
   // The house side: the computer's stack goes back to the house, and any rake is the house's income.
-  const house = users[HOUSE_UID];
+  // Demo rooms use fictitious money, so the real house is never touched.
+  const house = room.demo ? null : users[HOUSE_UID];
   if (house) {
-    const cancelled = room.result.reason === 'cancelled';
     if (room.mode === 'house') {
       const amount = payouts[E.AI_UID] || 0;
       if (amount > 0) credit(tx, house, amount, cancelled ? 'house_refund' : 'house_payout', roomId, now);
@@ -90,7 +97,7 @@ async function load(tx, roomId) {
 }
 
 async function save(tx, roomRef, room, users, now) {
-  if (room.status === 'finished' && !room.settled && !users[HOUSE_UID] && (room.mode === 'house' || (room.mode === 'pvp' && cfg.RAKE_PERCENT > 0))) {
+  if (room.status === 'finished' && !room.settled && !room.demo && !users[HOUSE_UID] && (room.mode === 'house' || (room.mode === 'pvp' && cfg.RAKE_PERCENT > 0))) {
     Object.assign(users, await readUsers(tx, [HOUSE_UID])); // read before the first write
   }
   if (room.status === 'finished') settle(tx, roomRef.id, room, users, now);
@@ -104,13 +111,15 @@ function mustBePlayer(room, uid) {
 
 // ---------------------------------------------------------------- operations
 async function createRoom(uid, data, now = Date.now()) {
-  const mode = data.mode === 'ai' ? 'ai' : data.mode === 'house' ? 'house' : 'pvp';
-  const visibility = data.visibility === 'public' ? 'public' : 'private';
+  const mode = data.mode === undefined ? 'pvp' : data.mode;
+  if (!['pvp', 'ai', 'house'].includes(mode)) throw fail('invalid-argument', 'Unknown room type.');
+  let visibility = data.visibility === 'public' ? 'public' : 'private';
   let fee = cfg.BUY_IN_OPTIONS[0];
   if (data.buyIn !== undefined && data.buyIn !== null) {
     fee = Number(data.buyIn);
     if (!Number.isInteger(fee) || !cfg.BUY_IN_OPTIONS.includes(fee)) throw fail('invalid-argument', 'That room amount is not allowed.');
   }
+  const useBonus = mode === 'house' && data.useBonus === true; // play with the promo bonus section
 
   const roomFee = mode === 'pvp' ? cfg.ROOM_FEE : 0; // the computer table and practice rooms charge no fee
 
@@ -119,28 +128,39 @@ async function createRoom(uid, data, now = Date.now()) {
     const me = users[uid];
     const house = users[HOUSE_UID];
     if (!me.exists) throw fail('failed-precondition', 'Create your profile first.');
+    const demo = !!me.data.demo; // demo accounts play with fictitious money, apart from the real house
+    if (demo) visibility = 'private';
     await checkFree(tx, me);
     const code = mode === 'pvp' ? await findFreeCode(tx) : null;
-    if (mode !== 'ai' && (me.data.balance || 0) < fee + roomFee) {
+    if (useBonus) {
+      const promo = promoOf(me.data);
+      if (demo || !promo) throw fail('failed-precondition', 'You have no promo bonus to play with.');
+      if ((promo.balance || 0) < fee) throw fail('failed-precondition', `Your promo bonus has ${promo.balance || 0} XAF. Choose a smaller amount.`);
+    } else if (mode !== 'ai' && (me.data.balance || 0) < fee + roomFee) {
       throw fail('failed-precondition', roomFee
         ? `You need ${fee + roomFee} XAF (${fee} room money + ${roomFee} room fee). Add money first.`
         : `You need ${fee} XAF to play. Add money first.`);
     }
-    if (mode === 'house' && (house.data.balance || 0) < fee) {
+    if (mode === 'house' && !demo && (house.data.balance || 0) < fee) {
       throw fail('unavailable', 'The computer table cannot cover that amount right now. Try a smaller amount.');
     }
 
     const roomRef = rooms().doc();
     const room = E.newRoom({ code, mode, visibility, hostUid: uid, hostName: me.data.displayName, entryFee: fee, stakeOptions: cfg.STAKE_OPTIONS, now });
     if (mode === 'pvp') room.fee = roomFee;
+    if (demo) room.demo = true;
+    if (useBonus) room.fundedBy = 'promo';
     if (mode !== 'ai') {
-      credit(tx, me, -fee, 'room_entry', roomRef.id, now);
+      if (useBonus) promoMove(tx, me, -fee, 'room_entry', roomRef.id, now);
+      else credit(tx, me, -fee, 'room_entry', roomRef.id, now);
       if (roomFee > 0) { // non-refundable: it is never paid back, even if the room is cancelled
         credit(tx, me, -roomFee, 'room_fee', roomRef.id, now);
-        credit(tx, house, roomFee, 'room_fee', roomRef.id, now, me.uid);
-        bumpStat(house, 'roomFees', roomFee);
+        if (!demo) {
+          credit(tx, house, roomFee, 'room_fee', roomRef.id, now, me.uid);
+          bumpStat(house, 'roomFees', roomFee);
+        }
       }
-      if (mode === 'house') credit(tx, house, -fee, 'house_stake', roomRef.id, now, me.uid);
+      if (mode === 'house' && !demo) credit(tx, house, -fee, 'house_stake', roomRef.id, now, me.uid);
     }
     if (mode === 'pvp') tx.set(codes().doc(code), { roomId: roomRef.id });
     me.patch.activeRoomId = roomRef.id;
@@ -171,6 +191,7 @@ async function joinRoom(uid, data, now = Date.now()) {
     if (!me.exists) throw fail('failed-precondition', 'Create your profile first.');
     if (room.status !== 'waiting') throw fail('failed-precondition', 'This room is no longer open.');
     if (room.hostUid === uid) throw fail('failed-precondition', 'This is your own room. Share the code with a friend.');
+    if (!!room.demo !== !!me.data.demo) throw fail('permission-denied', 'Demo accounts can only play with other demo accounts.');
     await checkFree(tx, me);
     if ((me.data.balance || 0) < room.entryFee + roomFee) {
       throw fail('failed-precondition', roomFee
@@ -182,8 +203,10 @@ async function joinRoom(uid, data, now = Date.now()) {
     credit(tx, me, -room.entryFee, 'room_entry', roomId, now);
     if (roomFee > 0) {
       credit(tx, me, -roomFee, 'room_fee', roomId, now);
-      credit(tx, house, roomFee, 'room_fee', roomId, now, me.uid);
-      bumpStat(house, 'roomFees', roomFee);
+      if (!room.demo) {
+        credit(tx, house, roomFee, 'room_fee', roomId, now, me.uid);
+        bumpStat(house, 'roomFees', roomFee);
+      }
     }
     me.patch.activeRoomId = roomId;
     me.data.activeRoomId = roomId;

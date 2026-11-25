@@ -25,9 +25,21 @@ const DEFAULTS = {
   DEPOSIT_EXPIRE_MINUTES: 60,
   AUTO_PAYOUT_MAX: 200000, // withdrawals up to this amount are paid automatically through Fapshi (0 = all wait for admin)
 
+  PLAY_THROUGH: 100, // percent of each deposit that must be bet before it can be withdrawn (100 = bet it once, 0 = off)
+
   // ---- Referral ----
   REFERRAL_BONUS: 100,
   REFERRAL_MIN_DEPOSIT: 500,
+
+  // ---- Promo code (a partner's code): paid into a separate bonus section, playable only vs the computer ----
+  PROMO_MIN_DEPOSIT: 5000, // the player must deposit at least this much with the code
+  PROMO_MAX_DEPOSIT: 10000,
+  PROMO_BONUS: 5000, // bonus added to the deposit (5000 deposited -> 10000 in the bonus section)
+  PROMO_WAGER: 25000, // XAF that must be bet against the computer, with bonus money, before it can be withdrawn
+
+  // ---- Partners ----
+  PARTNER_PERCENT: 10, // percent of the first real deposit of each player a partner brings
+  PARTNER_MIN_PAYOUT: 500,
 
   // ---- Accounts ----
   PIN_ITERATIONS: 5000,
@@ -89,8 +101,17 @@ export function configure(env = {}) {
   cfg.DEPOSIT_EXPIRE_MINUTES = num(env, 'DEPOSIT_EXPIRE_MINUTES', d.DEPOSIT_EXPIRE_MINUTES);
   cfg.AUTO_PAYOUT_MAX = Math.max(0, num(env, 'AUTO_PAYOUT_MAX', d.AUTO_PAYOUT_MAX));
 
+  cfg.PLAY_THROUGH = clamp(Math.floor(num(env, 'PLAY_THROUGH', d.PLAY_THROUGH)), 0, 1000);
+
   cfg.REFERRAL_BONUS = num(env, 'REFERRAL_BONUS', d.REFERRAL_BONUS);
   cfg.REFERRAL_MIN_DEPOSIT = num(env, 'REFERRAL_MIN_DEPOSIT', d.REFERRAL_MIN_DEPOSIT);
+
+  cfg.PROMO_MIN_DEPOSIT = Math.max(cfg.MIN_DEPOSIT, Math.floor(num(env, 'PROMO_MIN_DEPOSIT', d.PROMO_MIN_DEPOSIT)));
+  cfg.PROMO_MAX_DEPOSIT = Math.max(cfg.PROMO_MIN_DEPOSIT, Math.floor(num(env, 'PROMO_MAX_DEPOSIT', d.PROMO_MAX_DEPOSIT)));
+  cfg.PROMO_BONUS = Math.max(0, Math.floor(num(env, 'PROMO_BONUS', d.PROMO_BONUS)));
+  cfg.PROMO_WAGER = Math.max(0, Math.floor(num(env, 'PROMO_WAGER', d.PROMO_WAGER)));
+  cfg.PARTNER_PERCENT = clamp(num(env, 'PARTNER_PERCENT', d.PARTNER_PERCENT), 0, 50);
+  cfg.PARTNER_MIN_PAYOUT = Math.max(100, Math.floor(num(env, 'PARTNER_MIN_PAYOUT', d.PARTNER_MIN_PAYOUT)));
 
   cfg.PIN_ITERATIONS = Math.max(1000, num(env, 'PIN_ITERATIONS', d.PIN_ITERATIONS));
   cfg.PIN_MAX_FAILURES = Math.max(3, num(env, 'PIN_MAX_FAILURES', d.PIN_MAX_FAILURES));

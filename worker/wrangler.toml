@@ -11,19 +11,19 @@ crons = ["* * * * *", "*/2 * * * *"]
 [vars]
 # ---- Fapshi ----------------------------------------------------------------------------
 # "sandbox" = test money, "live" = real money (use your live keys).
-FAPSHI_ENV = "live"
+FAPSHI_ENV = "sandbox"
 # "direct" = the player gets an approval request on their phone.
 # "link"   = the player is sent to a Fapshi payment page. Use this if Fapshi has not
 #            activated Direct Pay on your live account yet.
-FAPSHI_DEPOSIT_MODE = "link"
+FAPSHI_DEPOSIT_MODE = "direct"
 # Withdrawals up to this many XAF are paid automatically through Fapshi, with no action from
 # you (a background job also retries a payout Fapshi refused, and refunds the player after
 # 5 refusals). 0 = every withdrawal waits for you on the admin page.
 AUTO_PAYOUT_MAX = "200000"
 
 # ---- Your site -------------------------------------------------------------------------
-# Your website address with no trailing slash, e.g. https://le-terre.web.app
-APP_BASE_URL = "https://le-terre.web.app"
+# Your website address with no trailing slash, e.g. https://my-project.web.app
+APP_BASE_URL = ""
 
 # ---- Game and money rules --------------------------------------------------------------
 # Room money: the host picks one of these when opening a room, and every player puts in the same
@@ -37,7 +37,7 @@ STAKE_OPTIONS = "100,250,500,1000,2000"
 ROOM_FEE = "100"
 # YOUR OWN mobile money number (MTN or Orange, like 670000000). House money can ONLY be withdrawn
 # to this number, whatever is typed on the admin page.
-OWNER_PHONE = "683812020"
+OWNER_PHONE = ""
 # Percent of the winner's PROFIT kept by you. 0 means your platform earns nothing from games.
 RAKE_PERCENT = "0"
 IDLE_TURN_SECONDS = "180"
@@ -45,6 +45,13 @@ WAITING_ROOM_SECONDS = "900"
 MIN_DEPOSIT = "500"
 MAX_DEPOSIT = "500000"
 MIN_WITHDRAW = "900"
+PLAY_THROUGH = "100"
+PROMO_MIN_DEPOSIT = "5000"
+PROMO_MAX_DEPOSIT = "10000"
+PROMO_BONUS = "5000"
+PROMO_WAGER = "25000"
+PARTNER_PERCENT = "10"
+PARTNER_MIN_PAYOUT = "500"
 MAX_WITHDRAW = "200000"
 WITHDRAW_FEE_PERCENT = "0"
 REFERRAL_BONUS = "100"
@@ -57,5 +64,3 @@ REFERRAL_MIN_DEPOSIT = "500"
 # FAPSHI_COLLECT_USER / FAPSHI_COLLECT_KEY   Fapshi collection service
 # FAPSHI_PAYOUT_USER  / FAPSHI_PAYOUT_KEY    Fapshi payout service (optional)
 # FAPSHI_WEBHOOK_SECRET      the secret you set for the webhook on the Fapshi dashboard
-[observability]
-enabled = true

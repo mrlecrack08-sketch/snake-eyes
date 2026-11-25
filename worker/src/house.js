@@ -33,6 +33,8 @@ async function houseInfo() {
     roomFees: stats.roomFees || 0,
     comNet: stats.comNet || 0,
     rake: stats.rake || 0,
+    promoBonus: stats.promoBonus || 0,
+    partnerCommission: stats.partnerCommission || 0,
     ownerPhone: normalizeCM(cfg.OWNER_PHONE) || null,
     payoutsReady: fapshi.payoutConfigured(),
     minWithdraw: cfg.MIN_WITHDRAW,

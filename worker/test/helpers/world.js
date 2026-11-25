@@ -41,7 +41,7 @@ export const env = {
   APP_BASE_URL: 'https://game.example',
   PIN_ITERATIONS: '1000',
   // The older tests were written around a 100 XAF room; the new defaults are tested separately.
-  BUY_IN_OPTIONS: '100', STAKE_OPTIONS: '10,20,50,100', ROOM_FEE: '0', MIN_DEPOSIT: '100', MIN_WITHDRAW: '500',
+  BUY_IN_OPTIONS: '100', STAKE_OPTIONS: '10,20,50,100', ROOM_FEE: '0', MIN_DEPOSIT: '100', MIN_WITHDRAW: '500', AUTO_PAYOUT_MAX: '0', PLAY_THROUGH: '0',
 };
 
 function verifyJwt(token, alg = 'RS256') {

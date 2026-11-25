@@ -5,6 +5,8 @@
  * Money model
  *   - Each player puts `entryFee` into the room. That becomes their room stack.
  *   - Each round the host picks a stake. The round winner takes `stake` from the loser's stack.
+ *     A stake is always smaller than the poorer player's stack, so a room lasts several rounds;
+ *     only the last scraps (less than the smallest stake) go on the table together.
  *   - The room ends when one stack hits zero, or when someone forfeits (their whole stack goes
  *     to the other player). Remaining stacks are paid back to wallets (minus the optional fee).
  *
@@ -42,9 +44,11 @@ function allowedStakes(room, options) {
   const stacks = room.order.map((u) => room.players[u].stack);
   const m = Math.min(...stacks);
   if (!(m > 0)) return [];
-  const set = new Set(options.filter((s) => s <= m));
-  set.add(m); // the smaller stack can always go all-in
-  return [...set].sort((a, b) => a - b);
+  // A stake is always LESS than the poorer player's room money, so one roll can never end a room
+  // that still has smaller stakes available. Only when what is left is smaller than the smallest
+  // stake (or equal to it) is the last of it put on the table, which finishes the room.
+  const below = [...new Set(options.filter((s) => s < m))].sort((a, b) => a - b);
+  return below.length ? below : [m];
 }
 
 // ---------------------------------------------------------------- one round
@@ -103,6 +107,7 @@ function newRoom({ code, mode, visibility, hostUid, hostName, entryFee, stakeOpt
     cur: null,
     last: null,
     history: [],
+    wagered: 0, // total XAF that changed hands over all finished rounds (what each player has bet)
     result: null,
     settled: false,
     createdAt: now,
@@ -157,6 +162,7 @@ function finishRound(r, { winner, reason }, stakeOptions, now) {
   const amount = Math.min(r.stake, r.players[loser].stack);
   r.players[winner].stack += amount;
   r.players[loser].stack -= amount;
+  r.wagered = (r.wagered || 0) + amount;
   const sums = {};
   for (const u of r.order) {
     const roll = r.cur.rolls[u];

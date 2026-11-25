@@ -15,7 +15,9 @@ import { fail } from './errors.js';
 import { cfg } from './config.js';
 import * as fapshi from './fapshi.js';
 import { normalizeCM, operatorHint } from './phone.js';
-import { readUsers, credit, flush } from './wallet.js';
+import { readUsers, credit, flush, bumpStat, HOUSE_UID } from './wallet.js';
+import { addUnplayed, grantPromo, withdrawableOf } from './promo.js';
+import { attachPartner, partnerWalletUid } from './attrib.js';
 import { verifyPin } from './auth.js';
 import { safeEqual } from './util.js';
 
@@ -42,10 +44,11 @@ function pickProvider(given, phone) {
 }
 
 // ---------------------------------------------------------------- deposits
-async function startDeposit(uid, data, now = Date.now()) {
+async function startDeposit(uid, data, now = Date.now(), extra = {}) {
   const amount = Number(data.amount);
   checkAmount(amount, cfg.MIN_DEPOSIT, cfg.MAX_DEPOSIT);
   const user = await loadUserDoc(uid);
+  if (user.demo) throw fail('failed-precondition', 'Demo accounts play with fictitious money and cannot deposit.');
   const phone = normalizeCM(data.phone || user.phone);
   if (!phone) throw fail('invalid-argument', 'Enter a valid Cameroon mobile number.');
   const provider = pickProvider(data.provider, phone);
@@ -56,7 +59,7 @@ async function startDeposit(uid, data, now = Date.now()) {
   }
 
   const ref = pay().doc();
-  await ref.set({ uid, type: 'deposit', provider, amount, phone, status: 'pending', createdAt: now, updatedAt: now });
+  await ref.set({ uid, type: 'deposit', provider, amount, phone, status: 'pending', createdAt: now, updatedAt: now, ...extra });
   try {
     const r = await fapshi.requestDeposit({ paymentId: ref.id, amount, phone, provider, uid, name: user.displayName });
     await ref.update({ providerRef: r.providerRef || null, updatedAt: Date.now() });
@@ -66,6 +69,22 @@ async function startDeposit(uid, data, now = Date.now()) {
     await ref.update({ status: 'failed', error: String(e.message).slice(0, 300), updatedAt: Date.now() });
     throw fail('unavailable', 'The payment service could not start the payment. Please try again in a moment.');
   }
+}
+
+/**
+ * A deposit made with a partner's promo code. The code is checked and the player is linked to the
+ * partner now; the bonus itself is only given when the payment succeeds (see finalizeDeposit).
+ */
+async function startPromoDeposit(uid, data, now = Date.now()) {
+  const amount = Number(data.amount);
+  if (!Number.isInteger(amount) || amount < cfg.PROMO_MIN_DEPOSIT || amount > cfg.PROMO_MAX_DEPOSIT) {
+    throw fail('invalid-argument', `With a promo code, deposit between ${cfg.PROMO_MIN_DEPOSIT} and ${cfg.PROMO_MAX_DEPOSIT} XAF.`);
+  }
+  const user = await loadUserDoc(uid);
+  if (user.demo) throw fail('failed-precondition', 'Demo accounts cannot use promo codes.');
+  if (user.promoUsedAt) throw fail('failed-precondition', 'You have already used a promo code.');
+  const info = await attachPartner(uid, data.code, 'promo', now);
+  return startDeposit(uid, data, now, { promo: { code: info.code, partnerId: info.partnerId, partnerName: info.partnerName } });
 }
 
 /**
@@ -86,20 +105,65 @@ async function finalizeDeposit(paymentId, now = Date.now(), { from = ['pending']
     const me = users[p.uid];
     if (!me.exists) throw fail('failed-precondition', 'Account not found.');
 
+    // ---- everything that must be read, before the first write ----
     let referrerUid = null;
     if (cfg.REFERRAL_BONUS > 0 && me.data.referredBy && !me.data.referralRewarded && value >= cfg.REFERRAL_MIN_DEPOSIT) {
       referrerUid = me.data.referredBy;
       users[referrerUid] = (await readUsers(tx, [referrerUid]))[referrerUid];
     }
+    const isPromo = !!(p.promo && p.promo.partnerId && !me.data.promoUsedAt && !me.data.demo && me.data.partnerId === p.promo.partnerId);
+    let commission = 0;
+    let partnerUid = null;
+    if (me.data.partnerId && !me.data.partnerCommissionPaid && !me.data.demo && cfg.PARTNER_PERCENT > 0) {
+      commission = Math.floor((value * cfg.PARTNER_PERCENT) / 100);
+      if (commission > 0) {
+        partnerUid = partnerWalletUid(me.data.partnerId);
+        users[partnerUid] = (await readUsers(tx, [partnerUid]))[partnerUid];
+        if (!users[partnerUid].exists) { commission = 0; partnerUid = null; }
+      }
+    }
+    if (isPromo || commission > 0) users[HOUSE_UID] = (await readUsers(tx, [HOUSE_UID]))[HOUSE_UID];
+    const house = users[HOUSE_UID];
 
+    // ---- writes ----
     tx.update(pRef, { status: 'success', creditedAmount: value, completedAt: now, updatedAt: now });
-    credit(tx, me, value, 'deposit', paymentId, now, p.provider);
+    if (isPromo) {
+      // The deposit and its bonus go to the separate promo section, never to the normal balance.
+      grantPromo(tx, me, house, { value, code: p.promo.code, partnerId: p.promo.partnerId, partnerName: p.promo.partnerName }, paymentId, now);
+    } else {
+      credit(tx, me, value, 'deposit', paymentId, now, p.provider);
+      addUnplayed(me, value); // it has to be bet before it can be withdrawn
+    }
     // A phone number that has paid into this account is a number we know belongs to the player.
     const known = Array.isArray(me.data.knownPhones) ? me.data.knownPhones : [];
     if (!known.includes(p.phone)) me.patch.knownPhones = [...known, p.phone].slice(-5);
     if (referrerUid && users[referrerUid].exists) {
       credit(tx, users[referrerUid], cfg.REFERRAL_BONUS, 'referral_bonus', p.uid, now, me.data.displayName);
+      addUnplayed(users[referrerUid], cfg.REFERRAL_BONUS);
       me.patch.referralRewarded = true;
+    }
+    if (me.data.partnerId) {
+      // The first real deposit pays the partner their share (a cost carried by the house).
+      if (commission > 0) {
+        const partner = users[partnerUid];
+        credit(tx, partner, commission, 'partner_commission', p.uid, now, me.data.displayName);
+        bumpStat(partner, 'commission', commission);
+        bumpStat(partner, 'depositsTotal', value);
+        credit(tx, house, -commission, 'partner_cost', p.uid, now, partner.data.displayName, true);
+        bumpStat(house, 'partnerCommission', commission);
+      }
+      if (!me.data.partnerCommissionPaid) {
+        me.patch.partnerCommissionPaid = true;
+        tx.set(db.collection('partnerRefs').doc(p.uid), {
+          uid: p.uid, name: me.data.displayName || '', phone: me.data.phone || '',
+          partnerId: me.data.partnerId, partnerName: me.data.partnerName || '', code: me.data.partnerCode || '',
+          via: me.data.partnerVia || 'signup', joinedAt: me.data.partnerJoinedAt || now,
+          firstDeposit: value, commission: commission || 0, firstDepositAt: now, promoUsed: isPromo,
+        });
+      } else if (isPromo) {
+        // a later promo deposit (their first deposit was a normal one): mark it on the partner table
+        tx.update(db.collection('partnerRefs').doc(p.uid), { promoUsed: true });
+      }
     }
     flush(tx, users, now);
     return true;
@@ -122,6 +186,7 @@ async function requestWithdrawal(uid, data, now = Date.now()) {
   checkAmount(amount, cfg.MIN_WITHDRAW, cfg.MAX_WITHDRAW);
   await verifyPin(uid, data.pin, now);
   const user = await loadUserDoc(uid);
+  if (user.demo) throw fail('failed-precondition', 'Demo accounts play with fictitious money and cannot withdraw.');
   const phone = normalizeCM(data.phone || user.phone);
   if (!phone) throw fail('invalid-argument', 'Enter a valid Cameroon mobile number.');
   const allowed = new Set([user.phone, ...(Array.isArray(user.knownPhones) ? user.knownPhones : [])]);
@@ -137,6 +202,14 @@ async function requestWithdrawal(uid, data, now = Date.now()) {
     const users = await readUsers(tx, [uid]);
     const me = users[uid];
     if (!me.exists) throw fail('failed-precondition', 'Account not found.');
+    // Money that has not been bet yet cannot leave: bet your deposits first. Winnings are free.
+    const free = withdrawableOf(me.data);
+    if (amount > free && amount <= (me.data.balance || 0)) {
+      const waiting = Math.max(0, (me.data.balance || 0) - free);
+      throw fail('failed-precondition', free > 0
+        ? `You can withdraw up to ${free} XAF now. The other ${waiting} XAF must be bet first (play some rounds with it).`
+        : `You must bet your deposit before you can withdraw it. Play some rounds first (${waiting} XAF still to be bet).`);
+    }
     credit(tx, me, -amount, 'withdraw_hold', ref.id, now, provider);
     flush(tx, users, now);
     tx.set(ref, { uid, type: 'withdrawal', provider, amount, fee, net, phone, status: 'pending', createdAt: now, updatedAt: now });
@@ -383,6 +456,6 @@ async function adminResolve(data) {
 }
 
 export {
-  startDeposit, finalizeDeposit, requestWithdrawal, sendWithdrawal, resolveWithdrawal, refreshPayment, checkPayment,
+  startDeposit, startPromoDeposit, finalizeDeposit, requestWithdrawal, sendWithdrawal, resolveWithdrawal, refreshPayment, checkPayment,
   reconcilePayments, autoSendPending, handleFapshiWebhook, adminList, adminResolve,
 };

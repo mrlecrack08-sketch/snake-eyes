@@ -44,7 +44,12 @@ const balance = (p) => world.raw(`users/${p.uid}`).balance;
 
 test('health, config, unknown routes, wrong methods, bad bodies', async () => {
   reset();
-  assert.deepEqual((await api('/api/health', { method: 'GET' })).json, { ok: true, service: 'snake-eyes', fapshi: 'sandbox' });
+  const h = (await api('/api/health', { method: 'GET' })).json;
+  assert.equal(h.ok, true);
+  assert.equal(h.service, 'snake-eyes');
+  assert.equal(h.fapshi, 'sandbox');
+  assert.ok(h.version >= 4, 'health shows the server version, so the owner can tell an old server from a new one');
+  assert.ok(h.features.includes('house') && h.features.includes('promo'));
   const c = await must('/api/getConfig', { body: {} });
   assert.deepEqual([c.entryFee, c.stakeOptions, c.currency, c.depositMode], [100, [10, 20, 50, 100], 'XAF', 'direct']);
   assert.equal((await api('/api/nothing', { body: {} })).status, 404);
@@ -262,6 +267,7 @@ test('house routes: closed to players and wrong keys, and a player can never rea
   // the public config shows the new rules
   const c = await must('/api/getConfig', { body: {} });
   assert.equal(typeof c.roomFee, 'number');
+  assert.ok(c.features.includes('house'), 'the page can tell this server has the computer table');
   assert.ok(Array.isArray(c.buyInOptions));
   // the house wallet is not readable or writable from a browser
   const rules = (await import('node:fs')).readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
