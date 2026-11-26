@@ -15,7 +15,7 @@ FAPSHI_ENV = "sandbox"
 # "direct" = the player gets an approval request on their phone.
 # "link"   = the player is sent to a Fapshi payment page. Use this if Fapshi has not
 #            activated Direct Pay on your live account yet.
-FAPSHI_DEPOSIT_MODE = "link"
+FAPSHI_DEPOSIT_MODE = "direct"
 # Withdrawals up to this many XAF are paid automatically through Fapshi, with no action from
 # you (a background job also retries a payout Fapshi refused, and refunds the player after
 # 5 refusals). 0 = every withdrawal waits for you on the admin page.
